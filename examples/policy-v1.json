@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "policyId": "root",
+  "version": "v1",
+  "rules": [
+    {
+      "id": "deny-high-sensitivity",
+      "effect": "DENY",
+      "conditions": [
+        {"source": "RESOURCE", "attribute": "sensitivity", "op": "ge", "expected": "4"}
+      ]
+    },
+    {
+      "id": "allow-admin-on-corp-network",
+      "effect": "ALLOW",
+      "conditions": [
+        {"source": "SUBJECT", "attribute": "role", "op": "eq", "expected": "admin"},
+        {"source": "RESOURCE", "attribute": "sensitivity", "op": "le", "expected": "3"},
+        {"source": "ENVIRONMENT", "attribute": "network", "op": "eq", "expected": "corp"}
+      ]
+    }
+  ]
+}

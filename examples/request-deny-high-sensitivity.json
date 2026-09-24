@@ -1,0 +1,6 @@
+{
+  "subject":  {"id": "u1", "attributes": {"role": "admin"}},
+  "resource": {"id": "d-secret", "attributes": {"sensitivity": "5"}},
+  "action": "read",
+  "environment": {"attributes": {"network": "corp"}}
+}
