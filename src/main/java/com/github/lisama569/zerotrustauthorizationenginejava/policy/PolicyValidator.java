@@ -1,6 +1,8 @@
 package com.github.lisama569.zerotrustauthorizationenginejava.policy;
 
 import com.github.lisama569.zerotrustauthorizationenginejava.exception.PolicyException;
+import com.github.lisama569.zerotrustauthorizationenginejava.model.AttributeCondition;
+import com.github.lisama569.zerotrustauthorizationenginejava.model.ConditionOperator;
 import com.github.lisama569.zerotrustauthorizationenginejava.model.FailureReason;
 import com.github.lisama569.zerotrustauthorizationenginejava.model.Policy;
 import com.github.lisama569.zerotrustauthorizationenginejava.model.PolicyRule;
@@ -93,6 +95,72 @@ public class PolicyValidator {
             throw new PolicyException(FailureReason.INVALID_POLICY,
                     "规则 " + r.getId() + " 的 requiredEnvironment 不能为 null");
         }
+        if (r.getSubjectConditions() == null) {
+            throw new PolicyException(FailureReason.INVALID_CONDITION,
+                    "规则 " + r.getId() + " 的 subjectConditions 不能为 null");
+        }
+        for (AttributeCondition c : r.getSubjectConditions()) {
+            validateCondition(r.getId(), c);
+        }
+    }
+
+    /**
+     * 属性条件发布期校验。比较方式是否被引擎支持已在解析阶段以
+     * UNSUPPORTED_OPERATOR 挡下；这里负责写法与取值合理性：
+     * - attribute 必须非空；
+     * - 标量比较（EQ/NE/数值）必须提供非空 value；
+     * - 集合比较（IN/NOT_IN）必须提供非空且不含空白元素的 values；
+     * - 数值比较的 value 必须可解析为数值。
+     */
+    private void validateCondition(String ruleId, AttributeCondition c) {
+        if (c == null) {
+            throw new PolicyException(FailureReason.INVALID_CONDITION,
+                    "规则 " + ruleId + " 的属性条件为空");
+        }
+        if (c.getAttribute() == null || c.getAttribute().isBlank()) {
+            throw new PolicyException(FailureReason.INVALID_CONDITION,
+                    "规则 " + ruleId + " 的属性条件缺少 attribute");
+        }
+        ConditionOperator op = c.getOperator();
+        if (op == null) {
+            throw new PolicyException(FailureReason.UNSUPPORTED_OPERATOR,
+                    "规则 " + ruleId + " 的条件 " + c.getAttribute() + " 缺少比较方式");
+        }
+        if (op.isCollection()) {
+            List<String> values = c.getValues();
+            if (values == null || values.isEmpty()) {
+                throw new PolicyException(FailureReason.INVALID_CONDITION,
+                        "规则 " + ruleId + " 的条件 " + c.getAttribute()
+                                + " 使用 " + op + " 时必须提供非空 values");
+            }
+            for (String v : values) {
+                if (v == null || v.isBlank()) {
+                    throw new PolicyException(FailureReason.INVALID_CONDITION,
+                            "规则 " + ruleId + " 的条件 " + c.getAttribute()
+                                    + " 的 values 含空元素");
+                }
+            }
+        } else {
+            if (c.getValue() == null || c.getValue().isBlank()) {
+                throw new PolicyException(FailureReason.INVALID_CONDITION,
+                        "规则 " + ruleId + " 的条件 " + c.getAttribute()
+                                + " 使用 " + op + " 时必须提供非空 value");
+            }
+            if (op.isNumeric() && !isNumeric(c.getValue())) {
+                throw new PolicyException(FailureReason.INVALID_CONDITION,
+                        "规则 " + ruleId + " 的条件 " + c.getAttribute()
+                                + " 进行数值比较，但 value 不是数值: " + c.getValue());
+            }
+        }
+    }
+
+    private boolean isNumeric(String s) {
+        try {
+            new java.math.BigDecimal(s.trim());
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 
     /**
@@ -119,8 +187,18 @@ public class PolicyValidator {
         List<String> actions = new ArrayList<>(r.getActions());
         java.util.Collections.sort(roles);
         java.util.Collections.sort(actions);
+        List<String> conditionSigs = new ArrayList<>();
+        for (AttributeCondition c : r.getSubjectConditions()) {
+            List<String> vals = c.getOperator().isCollection()
+                    ? new ArrayList<>(c.getValues())
+                    : new ArrayList<>(List.of(c.getValue() == null ? "" : c.getValue()));
+            java.util.Collections.sort(vals);
+            conditionSigs.add(c.getAttribute() + " " + c.getOperator() + " " + vals);
+        }
+        java.util.Collections.sort(conditionSigs);
         return String.join("|",
                 String.join(",", roles),
+                String.join(";", conditionSigs),
                 r.getResourceType(),
                 r.getMaxSensitivity().toString(),
                 String.join(",", actions),

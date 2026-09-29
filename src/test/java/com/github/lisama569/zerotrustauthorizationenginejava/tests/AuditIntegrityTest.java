@@ -50,7 +50,7 @@ class AuditIntegrityTest {
         audit.append("bob", "read", "d2", 5, "ctx2", Decision.DENY, "r2", "1.0.0");
 
         AuditRecord tampered = new AuditRecord(1, "fake-id", 1L, "mallory",
-                "write", "d2", 5, "ctx2", Decision.ALLOW, "r9", "9.9.9",
+                "write", "d2", 5, "ctx2", null, Decision.ALLOW, "r9", "9.9.9",
                 audit.all().get(1).getPreviousHash(),
                 audit.all().get(1).getCurrentHash());
         replaceRecord(audit, 1, tampered);
@@ -84,7 +84,7 @@ class AuditIntegrityTest {
                 Decision.DENY, "r", "1");
         // 篡改第 0 条并重新计算其自身哈希（无法知道后续记录，链必然断裂）
         AuditRecord fakeFirst = new AuditRecord(0, "x", 0L, "z", "x", "d", 1,
-                "c", Decision.ALLOW, "r", "1", AuditHasher.GENESIS_HASH, "");
+                "c", null, Decision.ALLOW, "r", "1", AuditHasher.GENESIS_HASH, "");
         String newHash = AuditHasher.computeHash(fakeFirst);
         replaceRecord(audit, 0, withHash(fakeFirst, newHash));
 
@@ -165,7 +165,7 @@ class AuditIntegrityTest {
     private static AuditRecord withHash(AuditRecord r, String hash) {
         return new AuditRecord(r.getSequence(), r.getAuditId(), r.getTimestamp(),
                 r.getSubjectId(), r.getAction(), r.getResourceId(), r.getResourceSensitivity(),
-                r.getContextSummary(), r.getDecision(), r.getMatchedRuleId(),
-                r.getPolicyVersion(), r.getPreviousHash(), hash);
+                r.getContextSummary(), r.getConditionEvidence(), r.getDecision(),
+                r.getMatchedRuleId(), r.getPolicyVersion(), r.getPreviousHash(), hash);
     }
 }

@@ -7,6 +7,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException;
 import com.github.lisama569.zerotrustauthorizationenginejava.exception.PolicyException;
+import com.github.lisama569.zerotrustauthorizationenginejava.model.AttributeCondition;
+import com.github.lisama569.zerotrustauthorizationenginejava.model.ConditionOperator;
 import com.github.lisama569.zerotrustauthorizationenginejava.model.Effect;
 import com.github.lisama569.zerotrustauthorizationenginejava.model.FailureReason;
 import com.github.lisama569.zerotrustauthorizationenginejava.model.Policy;
@@ -68,11 +70,39 @@ public class PolicyParser {
                                 + "（仅允许 ALLOW/DENY）");
             }
         }
+        List<AttributeCondition> conditions = r.subjectConditions == null
+                ? List.of()
+                : r.subjectConditions.stream()
+                        .map(c -> toCondition(r.id, c)).toList();
         return new PolicyRule(r.id, r.name, effect,
                 r.roles == null ? List.of() : List.copyOf(r.roles),
+                conditions,
                 r.resourceType, r.maxSensitivity,
                 r.actions == null ? List.of() : List.copyOf(r.actions),
                 r.requiredEnvironment == null ? Map.of() : Map.copyOf(r.requiredEnvironment));
+    }
+
+    private static AttributeCondition toCondition(String ruleId, ConditionDto c) {
+        if (c == null) {
+            throw new PolicyException(FailureReason.INVALID_CONDITION,
+                    "规则 " + ruleId + " 的 subjectConditions 中存在空条件");
+        }
+        if (c.operator == null || c.operator.isBlank()) {
+            throw new PolicyException(FailureReason.INVALID_CONDITION,
+                    "规则 " + ruleId + " 的属性条件缺少 operator，attribute="
+                            + c.attribute);
+        }
+        ConditionOperator operator;
+        try {
+            operator = ConditionOperator.valueOf(c.operator);
+        } catch (IllegalArgumentException e) {
+            // 比较方式引擎不认识 —— 必须与一般写法非法区分开
+            throw new PolicyException(FailureReason.UNSUPPORTED_OPERATOR,
+                    "规则 " + ruleId + " 的属性条件使用了不支持的比较方式: "
+                            + c.operator + "，attribute=" + c.attribute);
+        }
+        return new AttributeCondition(c.attribute, operator, c.value,
+                c.values == null ? null : List.copyOf(c.values));
     }
 
     private static String safeMessage(JacksonException e) {
@@ -99,6 +129,8 @@ public class PolicyParser {
         public String effect;
         @JsonProperty("roles")
         public List<String> roles;
+        @JsonProperty("subjectConditions")
+        public List<ConditionDto> subjectConditions;
         @JsonProperty("resourceType")
         public String resourceType;
         @JsonProperty("maxSensitivity")
@@ -107,5 +139,17 @@ public class PolicyParser {
         public List<String> actions;
         @JsonProperty("requiredEnvironment")
         public Map<String, String> requiredEnvironment;
+    }
+
+    /** 主体属性条件 DTO：attribute + operator + value/values */
+    public static class ConditionDto {
+        @JsonProperty("attribute")
+        public String attribute;
+        @JsonProperty("operator")
+        public String operator;
+        @JsonProperty("value")
+        public String value;
+        @JsonProperty("values")
+        public List<String> values;
     }
 }

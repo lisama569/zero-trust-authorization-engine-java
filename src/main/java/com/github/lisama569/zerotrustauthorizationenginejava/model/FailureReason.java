@@ -10,6 +10,10 @@ public enum FailureReason {
     UNKNOWN_FIELD,
     /** 策略结构/取值非法（缺必填字段、非法枚举等） */
     INVALID_POLICY,
+    /** 属性条件写法/取值不合法（属性键为空、期望值为空或越界等） */
+    INVALID_CONDITION,
+    /** 属性条件使用了引擎不认识的比较方式 */
+    UNSUPPORTED_OPERATOR,
     /** 同一规则同时声明 ALLOW 与 DENY 等冲突 */
     CONFLICTING_RULES,
     /** 回滚目标版本不存在 */

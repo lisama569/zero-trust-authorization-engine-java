@@ -43,6 +43,7 @@ public final class AuditHasher {
                 nz(r.getResourceId()),
                 r.getResourceSensitivity() == null ? "" : r.getResourceSensitivity().toString(),
                 nz(r.getContextSummary()),
+                nz(r.getConditionEvidence()),
                 r.getDecision() == null ? "" : r.getDecision().name(),
                 nz(r.getMatchedRuleId()),
                 nz(r.getPolicyVersion()),

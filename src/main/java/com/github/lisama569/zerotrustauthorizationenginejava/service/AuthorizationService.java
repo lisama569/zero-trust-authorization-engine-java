@@ -8,6 +8,7 @@ import com.github.lisama569.zerotrustauthorizationenginejava.model.Decision;
 import com.github.lisama569.zerotrustauthorizationenginejava.model.EnvironmentContext;
 import com.github.lisama569.zerotrustauthorizationenginejava.model.EvaluationRequest;
 import com.github.lisama569.zerotrustauthorizationenginejava.model.EvaluationResult;
+import com.github.lisama569.zerotrustauthorizationenginejava.model.MatchEvidence;
 import com.github.lisama569.zerotrustauthorizationenginejava.model.PublishedPolicy;
 import com.github.lisama569.zerotrustauthorizationenginejava.model.Resource;
 import com.github.lisama569.zerotrustauthorizationenginejava.model.Subject;
@@ -53,6 +54,7 @@ public class AuthorizationService {
         Decision decision;
         String matchedRuleId = null;
         String reason;
+        MatchEvidence rEvidence = null;
         String version = snapshot == null ? null : snapshot.getPolicy().getPolicyVersion();
 
         try {
@@ -74,6 +76,7 @@ public class AuthorizationService {
                 decision = r.getDecision();
                 matchedRuleId = r.getMatchedRuleId();
                 reason = r.getReason();
+                rEvidence = r.getEvidence();
             }
         } catch (IllegalArgumentException e) {
             decision = Decision.POLICY_NOT_MATCHED;
@@ -93,12 +96,14 @@ public class AuthorizationService {
         }
 
         String contextSummary = summarize(request, subject, resource);
+        String conditionEvidence = formatEvidence(decision == Decision.POLICY_NOT_MATCHED
+                || decision == Decision.EVALUATION_FAILED ? null : rEvidence);
         AuditRecord record = auditLog.append(
                 request == null ? null : request.getSubjectId(),
                 request == null ? null : request.getAction(),
                 request == null ? null : request.getResourceId(),
                 resource == null ? null : resource.getSensitivity(),
-                contextSummary, decision, matchedRuleId, version);
+                contextSummary, conditionEvidence, decision, matchedRuleId, version);
 
         log.info("授权评估 input[subject={}, action={}, resource={}, env={}] version={} decision={} matchedRule={} basis='{}' auditSeq={}",
                 request == null ? null : request.getSubjectId(),
@@ -108,7 +113,8 @@ public class AuthorizationService {
                         ? "{}" : new TreeMap<>(request.getEnvironment().getAttributes()),
                 version, decision, matchedRuleId, reason, record.getSequence());
 
-        return new EvaluationResult(decision, version, matchedRuleId, reason, record.getAuditId());
+        return new EvaluationResult(decision, version, matchedRuleId, reason,
+                record.getAuditId(), rEvidence);
     }
 
     private void validateRequest(EvaluationRequest request) {
@@ -131,8 +137,7 @@ public class AuthorizationService {
     }
 
     /** 关键上下文摘要：角色数/角色集合、资源类型与敏感级、环境键集合（不记录敏感值） */
-    private String summarize(EvaluationRequest request, Subject subject, Resource resource) {
-        StringBuilder sb = new StringBuilder();
+    private String summarize(EvaluationRequest request, Subject subject, Resource resource) {        StringBuilder sb = new StringBuilder();
         sb.append("subject=").append(subject == null ? "?" : subject.getSubjectId());
         sb.append(",roles=").append(subject == null ? "[]" : subject.getRoles());
         sb.append(";resourceType=").append(resource == null ? "?" : resource.getResourceType());
@@ -141,5 +146,23 @@ public class AuthorizationService {
                 ? Map.of() : request.getEnvironment().getAttributes();
         sb.append(";envKeys=").append(new TreeMap<>(env).keySet());
         return sb.toString();
+    }
+
+    /**
+     * 把属性条件依据转成审计证据字符串：
+     * 已核对的条件 + 缺失属性键（不含主体属性的具体值）。
+     */
+    private String formatEvidence(MatchEvidence evidence) {
+        if (evidence == null) {
+            return null;
+        }
+        boolean none = evidence.getEvaluatedConditions().isEmpty()
+                && evidence.getMissingAttributes().isEmpty();
+        if (none) {
+            return null;
+        }
+        return "evaluated=" + evidence.getEvaluatedConditions()
+                + (evidence.getMissingAttributes().isEmpty()
+                ? "" : ",missing=" + evidence.getMissingAttributes());
     }
 }
