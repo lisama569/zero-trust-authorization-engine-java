@@ -46,6 +46,7 @@ public final class AuditHasher {
                 r.getDecision() == null ? "" : r.getDecision().name(),
                 nz(r.getMatchedRuleId()),
                 nz(r.getPolicyVersion()),
+                nz(r.getAttributeConditionBasis()),
                 nz(r.getPreviousHash()));
     }
 

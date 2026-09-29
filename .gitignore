@@ -37,3 +37,6 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+### 运行时审计持久化文件（JSONL 与损坏隔离副本） ###
+/data/

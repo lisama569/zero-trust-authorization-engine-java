@@ -1,11 +1,13 @@
 package com.github.lisama569.zerotrustauthorizationenginejava.policy;
 
 import com.github.lisama569.zerotrustauthorizationenginejava.exception.PolicyException;
+import com.github.lisama569.zerotrustauthorizationenginejava.model.AttributeCondition;
 import com.github.lisama569.zerotrustauthorizationenginejava.model.FailureReason;
 import com.github.lisama569.zerotrustauthorizationenginejava.model.Policy;
 import com.github.lisama569.zerotrustauthorizationenginejava.model.PolicyRule;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -22,8 +24,11 @@ import java.util.Set;
 @Component
 public class PolicyValidator {
 
-    /** 当前引擎支持的 schema 主版本 */
-    public static final String SUPPORTED_SCHEMA = "1.0";
+    /**
+     * 当前引擎支持的 schema 版本。采用主版本兼容：1.x 全部接受（含仅含角色/资源
+     * 条件的老 1.0 策略）；attributeConditions 自 1.1 起引入，1.0 策略无需声明。
+     */
+    public static final String SUPPORTED_SCHEMA = "1.1";
 
     public void validate(Policy policy) {
         if (policy == null) {
@@ -93,6 +98,71 @@ public class PolicyValidator {
             throw new PolicyException(FailureReason.INVALID_POLICY,
                     "规则 " + r.getId() + " 的 requiredEnvironment 不能为 null");
         }
+        validateAttributeConditions(r);
+    }
+
+    /**
+     * 属性条件取值校验（结构/操作符在解析期已挡下，这里做语义校验）：
+     * - 属性键必须非空；
+     * - 标量条件必须有且仅有一个非空取值；
+     * - 集合条件取值集合必须非空且不含空白项；
+     * - 数值比较的取值必须可解析为数值。
+     */
+    private void validateAttributeConditions(PolicyRule r) {
+        List<AttributeCondition> conditions = r.getAttributeConditions();
+        if (conditions == null) {
+            throw new PolicyException(FailureReason.INVALID_POLICY,
+                    "规则 " + r.getId() + " 的 attributeConditions 不能为 null");
+        }
+        for (AttributeCondition c : conditions) {
+            if (c == null) {
+                throw new PolicyException(FailureReason.INVALID_POLICY,
+                        "规则 " + r.getId() + " 存在空属性条件");
+            }
+            String where = "规则 " + r.getId() + " 的属性条件[" + c.getAttribute() + " "
+                    + c.getOperator() + "]";
+            if (c.getAttribute() == null || c.getAttribute().isBlank()) {
+                throw new PolicyException(FailureReason.INVALID_POLICY,
+                        "规则 " + r.getId() + " 存在缺少 attribute 的属性条件");
+            }
+            if (c.getOperator() == null) {
+                throw new PolicyException(FailureReason.UNSUPPORTED_OPERATOR,
+                        where + " 缺少比较方式");
+            }
+            List<String> values = c.getValues() == null ? List.of() : c.getValues();
+            if (c.getOperator().isSetBased()) {
+                if (values.isEmpty()) {
+                    throw new PolicyException(FailureReason.INVALID_POLICY,
+                            where + " 的取值集合不能为空");
+                }
+                for (String v : values) {
+                    if (v == null || v.isBlank()) {
+                        throw new PolicyException(FailureReason.INVALID_POLICY,
+                                where + " 的取值集合中存在空值");
+                    }
+                }
+            } else {
+                if (values.size() != 1 || values.get(0) == null || values.get(0).isBlank()) {
+                    throw new PolicyException(FailureReason.INVALID_POLICY,
+                            where + " 必须提供唯一且非空的 value");
+                }
+                if (c.getOperator().isNumeric()) {
+                    if (!isNumeric(values.get(0))) {
+                        throw new PolicyException(FailureReason.INVALID_POLICY,
+                                where + " 要求数值比较，但 value 不是数值: " + values.get(0));
+                    }
+                }
+            }
+        }
+    }
+
+    private static boolean isNumeric(String s) {
+        try {
+            new BigDecimal(s.trim());
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 
     /**
@@ -124,6 +194,22 @@ public class PolicyValidator {
                 r.getResourceType(),
                 r.getMaxSensitivity().toString(),
                 String.join(",", actions),
-                new java.util.TreeMap<>(r.getRequiredEnvironment()).toString());
+                new java.util.TreeMap<>(r.getRequiredEnvironment()).toString(),
+                attributeConditionsSignature(r));
+    }
+
+    /**
+     * 属性条件参与冲突判定：条件完全一致才算同一匹配维度。
+     * 先按属性名、再按操作符排序，保证条件书写顺序不影响签名。
+     */
+    private String attributeConditionsSignature(PolicyRule r) {
+        List<String> parts = new ArrayList<>();
+        for (AttributeCondition c : r.getAttributeConditions()) {
+            List<String> values = new ArrayList<>(c.getValues());
+            java.util.Collections.sort(values);
+            parts.add(c.getAttribute() + " " + c.getOperator() + " [" + String.join(",", values) + "]");
+        }
+        java.util.Collections.sort(parts);
+        return String.join(";", parts);
     }
 }

@@ -17,13 +17,25 @@ public final class AuditRecord {
     private final Decision decision;
     private final String matchedRuleId;
     private final String policyVersion;
+    private final String attributeConditionBasis;
     private final String previousHash;
     private final String currentHash;
 
+    /** 旧签名：不含属性条件依据（兼容历史调用点） */
     public AuditRecord(long sequence, String auditId, long timestamp, String subjectId,
                        String action, String resourceId, Integer resourceSensitivity,
                        String contextSummary, Decision decision, String matchedRuleId,
                        String policyVersion, String previousHash, String currentHash) {
+        this(sequence, auditId, timestamp, subjectId, action, resourceId, resourceSensitivity,
+                contextSummary, decision, matchedRuleId, policyVersion, "",
+                previousHash, currentHash);
+    }
+
+    public AuditRecord(long sequence, String auditId, long timestamp, String subjectId,
+                       String action, String resourceId, Integer resourceSensitivity,
+                       String contextSummary, Decision decision, String matchedRuleId,
+                       String policyVersion, String attributeConditionBasis,
+                       String previousHash, String currentHash) {
         this.sequence = sequence;
         this.auditId = auditId;
         this.timestamp = timestamp;
@@ -35,6 +47,7 @@ public final class AuditRecord {
         this.decision = decision;
         this.matchedRuleId = matchedRuleId;
         this.policyVersion = policyVersion;
+        this.attributeConditionBasis = attributeConditionBasis;
         this.previousHash = previousHash;
         this.currentHash = currentHash;
     }
@@ -50,6 +63,7 @@ public final class AuditRecord {
     public Decision getDecision() { return decision; }
     public String getMatchedRuleId() { return matchedRuleId; }
     public String getPolicyVersion() { return policyVersion; }
+    public String getAttributeConditionBasis() { return attributeConditionBasis; }
     public String getPreviousHash() { return previousHash; }
     public String getCurrentHash() { return currentHash; }
 }

@@ -3,6 +3,7 @@ package com.github.lisama569.zerotrustauthorizationenginejava.web;
 import com.github.lisama569.zerotrustauthorizationenginejava.exception.PolicyException;
 import com.github.lisama569.zerotrustauthorizationenginejava.model.FailureReason;
 import com.github.lisama569.zerotrustauthorizationenginejava.web.dto.ErrorResponse;
+import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -31,6 +32,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public org.springframework.http.ResponseEntity<ErrorResponse> handleUnreadable(
             HttpMessageNotReadableException e) {
+        Throwable root = e.getCause();
+        // 调用方请求体夹带未知字段：明确识别为 UNKNOWN_FIELD（422），不静默吞掉
+        if (root instanceof UnrecognizedPropertyException upe) {
+            return org.springframework.http.ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                    .body(new ErrorResponse(FailureReason.UNKNOWN_FIELD.name(),
+                            "请求包含未知字段: " + upe.getPropertyName()));
+        }
         return org.springframework.http.ResponseEntity.badRequest()
                 .body(new ErrorResponse(FailureReason.INVALID_POLICY.name(),
                         "请求体无法解析: " + rootMessage(e)));

@@ -10,14 +10,21 @@ public final class EvaluationResult {
     private final String matchedRuleId;
     private final String reason;
     private final String auditId;
+    private final String conditionBasis;
 
     public EvaluationResult(Decision decision, String policyVersion, String matchedRuleId,
                             String reason, String auditId) {
+        this(decision, policyVersion, matchedRuleId, reason, auditId, "");
+    }
+
+    public EvaluationResult(Decision decision, String policyVersion, String matchedRuleId,
+                            String reason, String auditId, String conditionBasis) {
         this.decision = decision;
         this.policyVersion = policyVersion;
         this.matchedRuleId = matchedRuleId;
         this.reason = reason;
         this.auditId = auditId;
+        this.conditionBasis = conditionBasis == null ? "" : conditionBasis;
     }
 
     public Decision getDecision() { return decision; }
@@ -25,4 +32,5 @@ public final class EvaluationResult {
     public String getMatchedRuleId() { return matchedRuleId; }
     public String getReason() { return reason; }
     public String getAuditId() { return auditId; }
+    public String getConditionBasis() { return conditionBasis; }
 }

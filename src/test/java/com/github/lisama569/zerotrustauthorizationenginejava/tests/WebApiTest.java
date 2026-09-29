@@ -131,17 +131,70 @@ class WebApiTest {
     }
 
     @Test
+    @DisplayName("评估请求夹带未知字段：422 + UNKNOWN_FIELD，不被静默忽略")
+    void evaluateUnknownFieldRejected() {
+        String body = "{\"subjectId\":\"alice\",\"action\":\"read\","
+                + "\"resourceId\":\"doc-public\",\"environment\":{},"
+                + "\"impersonate\":\"admin\"}";
+        ApiResponse node = post("/api/authz/evaluate", body);
+        assertEquals("422", String.valueOf(node.status));
+        assertEquals("UNKNOWN_FIELD", node.body().get("failureReason").asText());
+        assertTrue(node.body().get("message").asText().contains("impersonate"));
+    }
+
+    @Test
+    @DisplayName("属性条件策略端到端：1.1.0 下 alice 读机密 ALLOW 且回传条件依据")
+    void attributeConditionEndToEnd() {
+        // 发布一份仅按 clearanceLevel 数值条件放行工程师读机密的策略
+        String policy = "{\"policyVersion\":\"9.10.1\",\"schemaVersion\":\"1.1\","
+                + "\"rules\":[{\"id\":\"web-attr\",\"effect\":\"ALLOW\","
+                + "\"roles\":[\"engineer\"],\"resourceType\":\"document\","
+                + "\"maxSensitivity\":5,\"actions\":[\"read\"],"
+                + "\"requiredEnvironment\":{},"
+                + "\"attributeConditions\":[{\"attribute\":\"clearanceLevel\","
+                + "\"operator\":\"GTE\",\"value\":3}]}]}";
+        String publishBody;
+        try {
+            publishBody = mapper.writeValueAsString(Map.of("note", "web-attr",
+                    "policyJson", policy));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        ApiResponse published = post("/api/policies/publish", publishBody);
+        assertEquals(200, published.status);
+
+        ApiResponse allow = post("/api/authz/evaluate",
+                evalBody("alice", "read", "doc-secret", Map.of()));
+        assertEquals("ALLOW", allow.body().get("decision").asText());
+        assertEquals("web-attr", allow.body().get("matchedRuleId").asText());
+        String basis = allow.body().get("conditionBasis").asText();
+        assertTrue(basis.contains("clearanceLevel GTE 3"));
+        assertTrue(basis.contains("满足"));
+
+        // carol clearanceLevel=1：数值不满足 -> POLICY_NOT_MATCHED
+        ApiResponse deny = post("/api/authz/evaluate",
+                evalBody("carol", "read", "doc-secret", Map.of()));
+        assertEquals("POLICY_NOT_MATCHED", deny.body().get("decision").asText());
+
+        // 恢复到种子 1.0.0，避免影响同上下文其它测试
+        post("/api/policies/rollback", "{\"targetVersion\":\"1.0.0\"}");
+    }
+
+    @Test
     @DisplayName("审计记录与校验接口可访问且链完整")
     void auditEndpoints() {
         ApiResponse ignored = post("/api/authz/evaluate", evalBody("alice", "read", "doc-public", Map.of()));
         assertNotNull(ignored.body());
         JsonNode verify = get("/api/audit/verify");
         assertTrue(verify.get("intact").asBoolean(), verify.get("detail").asText());
+        assertTrue(verify.get("loadedFromPersistence").asBoolean(),
+                "应用启动时应已从持久化文件重放");
+        assertTrue(verify.get("replayedCount").asInt() >= 0);
         JsonNode records = get("/api/audit/records");
         assertTrue(records.isArray());
         assertFalse(records.isEmpty());
         List<String> required = List.of("sequence", "currentHash", "previousHash",
-                "policyVersion", "decision", "contextSummary");
+                "policyVersion", "decision", "contextSummary", "attributeConditionBasis");
         for (String field : required) {
             assertFalse(records.get(0).get(field).isNull(),
                     "审计记录必须包含 " + field);

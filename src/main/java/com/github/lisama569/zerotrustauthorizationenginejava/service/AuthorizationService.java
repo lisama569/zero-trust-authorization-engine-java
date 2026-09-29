@@ -53,6 +53,7 @@ public class AuthorizationService {
         Decision decision;
         String matchedRuleId = null;
         String reason;
+        String conditionBasis = "";
         String version = snapshot == null ? null : snapshot.getPolicy().getPolicyVersion();
 
         try {
@@ -74,6 +75,7 @@ public class AuthorizationService {
                 decision = r.getDecision();
                 matchedRuleId = r.getMatchedRuleId();
                 reason = r.getReason();
+                conditionBasis = r.getConditionBasis();
             }
         } catch (IllegalArgumentException e) {
             decision = Decision.POLICY_NOT_MATCHED;
@@ -98,17 +100,19 @@ public class AuthorizationService {
                 request == null ? null : request.getAction(),
                 request == null ? null : request.getResourceId(),
                 resource == null ? null : resource.getSensitivity(),
-                contextSummary, decision, matchedRuleId, version);
+                contextSummary, decision, matchedRuleId, version, conditionBasis);
 
-        log.info("授权评估 input[subject={}, action={}, resource={}, env={}] version={} decision={} matchedRule={} basis='{}' auditSeq={}",
+        log.info("授权评估 input[subject={}, action={}, resource={}, env={}] version={} decision={} matchedRule={} attrConditions='{}' basis='{}' auditSeq={}",
                 request == null ? null : request.getSubjectId(),
                 request == null ? null : request.getAction(),
                 request == null ? null : request.getResourceId(),
                 request == null || request.getEnvironment() == null
                         ? "{}" : new TreeMap<>(request.getEnvironment().getAttributes()),
-                version, decision, matchedRuleId, reason, record.getSequence());
+                version, decision, matchedRuleId, conditionBasis, reason,
+                record.getSequence());
 
-        return new EvaluationResult(decision, version, matchedRuleId, reason, record.getAuditId());
+        return new EvaluationResult(decision, version, matchedRuleId, reason,
+                record.getAuditId(), conditionBasis);
     }
 
     private void validateRequest(EvaluationRequest request) {
@@ -130,11 +134,13 @@ public class AuthorizationService {
         return s == null || s.isBlank();
     }
 
-    /** 关键上下文摘要：角色数/角色集合、资源类型与敏感级、环境键集合（不记录敏感值） */
+    /** 关键上下文摘要：角色集合、主体属性键集合、资源类型与敏感级、环境键集合（不记录敏感值） */
     private String summarize(EvaluationRequest request, Subject subject, Resource resource) {
         StringBuilder sb = new StringBuilder();
         sb.append("subject=").append(subject == null ? "?" : subject.getSubjectId());
         sb.append(",roles=").append(subject == null ? "[]" : subject.getRoles());
+        sb.append(",attrKeys=").append(subject == null || subject.getAttributes() == null
+                ? "[]" : new TreeMap<>(subject.getAttributes()).keySet());
         sb.append(";resourceType=").append(resource == null ? "?" : resource.getResourceType());
         sb.append(",sensitivity=").append(resource == null ? "?" : resource.getSensitivity());
         Map<String, String> env = request == null || request.getEnvironment() == null
