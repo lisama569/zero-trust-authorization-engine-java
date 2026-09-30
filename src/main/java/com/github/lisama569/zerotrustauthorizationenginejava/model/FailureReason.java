@@ -18,6 +18,8 @@ public enum FailureReason {
     VERSION_NOT_FOUND,
     /** 评估上下文缺少必需属性 */
     MISSING_CONTEXT,
+    /** 审计历史整体丢失、无法复核（需显式恢复后才能继续写入） */
+    AUDIT_HISTORY_UNVERIFIABLE,
     /** 内部错误，细节不外泄 */
     INTERNAL_ERROR
 }

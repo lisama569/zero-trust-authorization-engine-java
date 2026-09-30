@@ -34,7 +34,13 @@ public class EngineBeans {
         }
         AuditLog auditLog = new AuditLog(store);
         // 构造期立即重放，保证 Bean 可用时历史记录已恢复
-        auditLog.loadFromPersistence();
+        var outcome = auditLog.loadFromPersistence();
+        if (outcome.historyLost()) {
+            log.error("审计历史整体丢失且无法复核：{}。审计写入已锁定，请人工核对存储 {}，"
+                            + "确认后调用 POST /api/audit/recover-history 显式恢复，"
+                            + "系统不会静默从零续写",
+                    outcome.detail(), store.location());
+        }
         return auditLog;
     }
 

@@ -1,5 +1,6 @@
 package com.github.lisama569.zerotrustauthorizationenginejava.web;
 
+import com.github.lisama569.zerotrustauthorizationenginejava.audit.AuditHistoryUnavailableException;
 import com.github.lisama569.zerotrustauthorizationenginejava.exception.PolicyException;
 import com.github.lisama569.zerotrustauthorizationenginejava.model.FailureReason;
 import com.github.lisama569.zerotrustauthorizationenginejava.web.dto.ErrorResponse;
@@ -7,6 +8,7 @@ import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -42,6 +44,14 @@ public class GlobalExceptionHandler {
         return org.springframework.http.ResponseEntity.badRequest()
                 .body(new ErrorResponse(FailureReason.INVALID_POLICY.name(),
                         "请求体无法解析: " + rootMessage(e)));
+    }
+
+    @ExceptionHandler(AuditHistoryUnavailableException.class)
+    public ResponseEntity<ErrorResponse> handleAuditHistory(AuditHistoryUnavailableException e) {
+        log.error("审计历史不可复核，拒绝写入: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(new ErrorResponse(FailureReason.AUDIT_HISTORY_UNVERIFIABLE.name(),
+                        e.getMessage()));
     }
 
     @ExceptionHandler(Exception.class)

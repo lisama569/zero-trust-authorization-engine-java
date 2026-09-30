@@ -2,11 +2,13 @@ package com.github.lisama569.zerotrustauthorizationenginejava.tests;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.lisama569.zerotrustauthorizationenginejava.audit.AuditLog;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -15,6 +17,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -34,6 +38,10 @@ class WebApiTest {
     private int port;
     @Autowired
     private TestRestTemplate rest;
+    @Autowired
+    private AuditLog auditLog;
+    @Value("${audit.file.path}")
+    private String auditFilePath;
 
     private String url(String path) {
         return "http://localhost:" + port + path;
@@ -199,5 +207,52 @@ class WebApiTest {
             assertFalse(records.get(0).get(field).isNull(),
                     "审计记录必须包含 " + field);
         }
+    }
+
+    @Test
+    @DisplayName("整份历史丢失：评估 409、verify 标记 historyLost，显式恢复后写入恢复")
+    void historyLossLocksWritesUntilRecoveredOverHttp() throws Exception {
+        // 确保此前确实产生过记录与封签
+        post("/api/authz/evaluate", evalBody("alice", "read", "doc-public", Map.of()));
+        Path data = Path.of(auditFilePath);
+        Path checkpoint = Path.of(auditFilePath + ".checkpoint.json");
+        assertTrue(Files.exists(data));
+        assertTrue(Files.exists(checkpoint));
+
+        // 模拟整份历史文件被删（保留封签），重新加载
+        Files.delete(data);
+        auditLog.loadFromPersistence();
+
+        JsonNode verifyLost = get("/api/audit/verify");
+        assertFalse(verifyLost.get("intact").asBoolean());
+        assertTrue(verifyLost.get("historyLost").asBoolean(), "必须标记历史整体丢失");
+        assertTrue(verifyLost.get("recoveryDetail").asText().contains("整体丢失"));
+
+        // 锁定期间评估被拒绝（审计无法留痕），返回 409 且不泄露堆栈
+        ApiResponse blocked = post("/api/authz/evaluate",
+                evalBody("alice", "read", "doc-public", Map.of()));
+        assertEquals(409, blocked.status);
+        assertEquals("AUDIT_HISTORY_UNVERIFIABLE",
+                blocked.body().get("failureReason").asText());
+
+        // 无丢失状态时不应误恢复（当前是锁定状态，恢复成功）
+        JsonNode recovered = post("/api/audit/recover-history", "").body();
+        assertTrue(recovered.get("recovered").asBoolean());
+        assertFalse(auditLog.isHistoryLost());
+
+        JsonNode verifyAfter = get("/api/audit/verify");
+        assertTrue(verifyAfter.get("intact").asBoolean(), verifyAfter.get("detail").asText());
+        assertFalse(verifyAfter.get("historyLost").asBoolean());
+
+        // 恢复后评估正常、审计重新留痕
+        ApiResponse ok = post("/api/authz/evaluate",
+                evalBody("alice", "read", "doc-public", Map.of()));
+        assertEquals(200, ok.status);
+        assertNotNull(ok.body().get("auditId").asText());
+
+        // 此时再调用恢复接口应 409（没有待恢复状态）
+        ApiResponse redundant = post("/api/audit/recover-history", "");
+        assertEquals(409, redundant.status);
+        assertFalse(redundant.body().get("recovered").asBoolean());
     }
 }

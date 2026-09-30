@@ -27,6 +27,16 @@ public class InMemoryAuditStore implements AuditStore {
     }
 
     @Override
+    public void commitWatermark(List<AuditRecord> intactPrefix) {
+        // 纯内存存储没有带外封签，水位随内存列表天然一致，无需动作
+    }
+
+    @Override
+    public synchronized void resetForFreshHistory() {
+        records.clear();
+    }
+
+    @Override
     public String location() {
         return "in-memory";
     }
