@@ -22,6 +22,19 @@ public interface AuditStore {
      */
     void quarantineAndRewrite(List<AuditRecord> intactPrefix);
 
+    /**
+     * 无检查点但数据文件自带一条完好哈希链（老版本数据升级）时，
+     * 以重放确认的记录数与末条哈希自举建立旁路基线。
+     */
+    void commitCheckpoint(int count, String lastHash);
+
+    /**
+     * 确保“首次使用”现场就绪：数据文件与空基线存在、追加通道可用。
+     * 内存存储无需动作。供启动重放与不可恢复后显式重置时调用。
+     */
+    default void ensureInitialized() {
+    }
+
     /** 存储位置的可读描述（日志/排查用） */
     String location();
 }

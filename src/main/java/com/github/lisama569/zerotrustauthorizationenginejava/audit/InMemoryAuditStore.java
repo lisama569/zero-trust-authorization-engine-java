@@ -27,6 +27,11 @@ public class InMemoryAuditStore implements AuditStore {
     }
 
     @Override
+    public void commitCheckpoint(int count, String lastHash) {
+        // 纯内存存储无旁路检查点
+    }
+
+    @Override
     public String location() {
         return "in-memory";
     }

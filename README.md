@@ -7,8 +7,9 @@
 - 结合**主体角色/属性 + 资源类型/敏感级别 + 环境条件 + 主体属性条件**
   （相等/不等/集合/数值比较）的**默认拒绝**授权评估，属性“缺失”与“不满足”严格区分；
 - **并发评估与版本切换**下的版本一致性（单次评估固定快照，不混用规则）；
-- **哈希链审计日志 + 本地 JSONL 持久化**：关联生效版本、上下文摘要与属性条件依据，
-  重启后整体读回继续复核；篡改/插入/删除/截断可定位，并发不丢记录。
+- **哈希链审计日志 + 本地 JSONL 持久化 + 链外基线**：关联生效版本、上下文
+  摘要与属性条件依据，重启后整体读回继续复核；篡改/插入/删除/截断、
+  **尾部整段删除**可定位，**历史整体丢失**拒绝续写，并发不丢记录。
 
 ## 1. 构建与本地验证
 
@@ -16,7 +17,7 @@
 # 编译
 mvn compile
 
-# 运行全部测试（58 个，单测日志会打印关键输入、版本、判定依据与属性条件）
+# 运行全部测试（66 个，单测日志会打印关键输入、版本、判定依据与属性条件）
 mvn test
 
 # 启动服务（默认 8080 端口）
@@ -25,7 +26,8 @@ mvn spring-boot:run
 
 启动时 `SeedDataInitializer` 会写入演示主体/资源，发布默认策略版本 `1.0.0`
 （仅角色/资源/环境维度），并登记一份可切换的 `1.1.0`（角色 + 主体属性条件）。
-审计文件默认位于 `data/audit-records.jsonl`，启动时自动重放。
+审计文件默认位于 `data/audit-records.jsonl`（旁路基线为同目录
+`audit-records.jsonl.checkpoint`），启动时自动重放。
 
 ### 演示主体与资源
 
@@ -226,10 +228,32 @@ currentHash = SHA-256( previousHash | 序列号 | 审计ID | 时间戳 | 主体 
   已返回给调用方的记录在重启后不会丢。Bean 启动时从文件**整体读回并复核**，
   `GET /api/audit/verify` 的 `loadedFromPersistence` / `replayedCount`
   / `recoveryDetail` 会反映重放与恢复情况。
-- **本地文件被破坏的发现**：重放从创世起逐条检查序列号连续、前驱指针、内容哈希，
-  并识别坏行（截断）与行数不一致。任一条被**改过、插入、删除或文件被截断**，
-  都会返回 `intact=false` 并给出 `brokenAtSequence`；可疑原文件被重命名为
-  `*.corrupt-<时间戳>` 隔离，仅用最长完好前缀重建，随后新记录接在完好链尾。
+- **链外基线（checkpoint）**：哈希链只能发现“链上断裂”，无法发现两种
+  前缀依然自洽的破坏。因此数据文件旁还维护
+  `audit-records.jsonl.checkpoint`（记录上一次已确认的**记录总数**与
+  **末条 currentHash**，附防误改校验码，原子替换落盘）。写顺序固定为
+  “先 force 落数据，再替换基线”，崩溃窗口至多落后 1 条，重放时凭下链哈希
+  自动追赶补齐。基线自首次启动即建立；老版本遗留的无基线数据在链完好时
+  自动自举建立基线。
+- **尾部整段删除的判定**：手工把文件末尾一条或连续几条记录整行删掉后，
+  剩余前缀的哈希链仍然自洽；重放时用基线记录数对比完好前缀，发现条数变少即
+  判为**损坏**，`brokenAtSequence` 指向**缺失起点**，`detail` 给出
+  “基线应有 N 条 / 实际完好 M 条 / 缺失 N−M 条（自 seq=K 起）”的可定位
+  信息。残缺原文件隔离为 `*.corrupt-<时间戳>`，仅恢复完好前缀，**不会把
+  残缺部分当正常历史继续往后追加**；恢复后新记录从缺失起点序号续接，
+  序号连续不重复。
+- **历史整体丢失的判定**：若基线存在且记录数 > 0，但数据文件整体消失，
+  判为**不可恢复（unrecoverable）**：`intact=false`、`unrecoverable=true`，
+  系统**不**按“空历史、正常”处理，也不自动补建空文件或从零续写——此时任何
+  审计追加都抛 `AuditIntegrityException`（经统一收口对外为 500/
+  INTERNAL_ERROR，不产生半截历史）。这与**首次使用**（数据文件与基线都不
+  存在）严格区分：后者正常初始化，空基线就绪后即可从 seq=0 开始记录。
+  运维确认现场后，删除/归档残留基线（与数据文件）再重启，即按首次使用
+  重新初始化。
+- **其它本地文件破坏的发现**：重放从创世起逐条检查序列号连续、前驱指针、
+  内容哈希，并识别坏行（截断）与行数不一致。任一条被**改过、插入、删除中
+  间记录或文件被截断**，都会返回损坏并给出 `brokenAtSequence`；可疑原文件
+  被重命名隔离，仅用最长完好前缀重建，随后新记录接在完好链尾。
 - 并发保证：压测 16 线程 × 500 条内存链共 8000 条、
   12 线程 × 400 条落盘共 4800 条并重启读回，序列号连续不重复、不丢记录、
   链保持完整（`AuditIntegrityTest`、`AuditConcurrentPersistenceTest`）。
@@ -244,9 +268,23 @@ currentHash = SHA-256( previousHash | 序列号 | 审计ID | 时间戳 | 主体 
   "detail": "审计链完整",
   "loadedFromPersistence": true,
   "replayedCount": 50,
-  "recoveryDetail": ""
+  "recoveryDetail": "",
+  "loadCorrupted": false,
+  "unrecoverable": false
 }
 ```
+
+字段说明：
+
+| 字段 | 含义 |
+|---|---|
+| `intact` | 当前内存中的哈希链是否完好；历史整体丢失时恒为 false |
+| `brokenAtSequence` | 首个断裂/缺失起点序列号（尾部删除即被删的第一条序号） |
+| `detail` | 链校验结论或失败原因 |
+| `loadedFromPersistence` / `replayedCount` | 本次启动是否从重放恢复及恢复条数 |
+| `loadCorrupted` | 本次启动重放**是否曾检出损坏**（含已自动隔离恢复的尾部删除）；即使恢复后链重新完好，该标记仍为 true，`recoveryDetail` 留有事件说明 |
+| `recoveryDetail` | 启动重放时发现的损坏/缺失定位与隔离恢复说明 |
+| `unrecoverable` | 历史整体丢失、无法复核且拒绝追加，需运维显式处置 |
 
 ## 6. 测试覆盖
 
@@ -257,7 +295,7 @@ currentHash = SHA-256( previousHash | 序列号 | 审计ID | 时间戳 | 主体 
 | `AuthorizationDecisionTest` (11) | ALLOW / 显式 DENY / CONTEXT_MISSING / POLICY_NOT_MATCHED、敏感级权限边界、环境值不匹配 vs 缺失、未知主体/资源/非法输入、同版本确定性、发布与回滚后结论变化 |
 | `AttributeConditionEvaluationTest` (5) | 属性条件命中、有值不满足 vs 属性缺失严格区分、数值边界、缺属性返回 CONTEXT_MISSING 并指明键名、conditionBasis 内容、同版本确定性 |
 | `AuditIntegrityTest` (5) | 正常链、内容篡改、记录缺失、重算哈希伪造、8000 条并发追加不丢且链完整 |
-| `AuditPersistenceTest` (5) | 重启整体读回、改写/插入/删除/截断四类文件破坏的定位与隔离恢复、恢复后续写链完整 |
+| `AuditPersistenceTest` (13) | 重启整体读回、改写/插入/删除/截断四类文件破坏的定位与隔离恢复、**尾部删 1 条与连续删多条的定位及恢复后续写**、**整份历史丢失不可恢复且拒绝追加/首次使用正常初始化/显式处置后重置**、多轮正常重启序号连续、崩溃窗口基线追赶、超窗领先判损坏、老数据无基线自举 |
 | `AuditConcurrentPersistenceTest` (1) | 12×400=4800 条并发落盘后重启全部读回、序列号连续、链完整 |
 | `ConcurrentSwitchTest` (1) | 8 评估线程 × 400 请求与反复发布/回滚并发，逐条校验“结论 ⇔ 版本”自洽 |
 | `WebApiTest` (6) | HTTP 端到端四类结论、属性条件端到端、评估请求未知字段 422、UNKNOWN_FIELD/VERSION_NOT_FOUND 返回 422、不泄露堆栈、审计接口含持久化字段 |
@@ -296,6 +334,26 @@ curl -s -X POST localhost:8080/api/authz/evaluate -H 'Content-Type: application/
 # 重启后审计整体读回；手工改 data/audit-records.jsonl 任意一行后重启/再校验，
 # 会得到 intact=false 与 brokenAtSequence，原文件被隔离为 *.corrupt-*
 curl -s localhost:8080/api/audit/verify
+
+# —— 尾部整段删除验证 ——
+# 先产生若干条记录，然后停服，删掉 JSONL 末尾一整行（或连续几行）后重启：
+sed -i '$d' data/audit-records.jsonl          # 删最后一条；连续删多条可重复执行
+# 重启后再校验：loadCorrupted=true，recoveryDetail 含“检测到尾部记录缺失：
+# 基线记录应有 N 条，实际完好 M 条，缺失 K 条（尾部缺失自 seq=K 起）”，
+# 原文件被隔离为 *.corrupt-*，内存仅保留 M 条完好前缀；此后新追加的记录从
+# seq=M 续接，再重启恢复正常（loadCorrupted 回到 false）。
+curl -s localhost:8080/api/audit/verify
+
+# —— 历史整体丢失验证 ——
+# 停服后只保留基线、删掉整份数据文件（注意不要删 .checkpoint）：
+rm data/audit-records.jsonl
+# 重启后校验：intact=false、unrecoverable=true、loadCorrupted=true，
+# detail 说明“基线记录应有 N 条，但数据文件不存在”；评估/追加被拒绝
+# （返回 500 INTERNAL_ERROR），系统不会默默从 seq=0 重新开始。
+curl -s localhost:8080/api/audit/verify
+# 运维确认后显式处置：归档/删除残留基线（数据文件本就不存在），重启即按
+# 首次使用重新初始化（空历史、空基线，可正常从 seq=0 记录）。
+rm -f data/audit-records.jsonl.checkpoint
 ```
 
 ## 8. 主要代码结构
@@ -307,8 +365,11 @@ version/      PolicyVersionManager（版本注册表 + 原子快照切换）
 engine/       PolicyEvaluator（角色/资源/动作/属性条件/环境匹配与默认拒绝判定）
 service/      AuthorizationService（评估门面、异常收口、审计留痕）
               PolicyGovernanceService（治理门面）
-audit/        AuditHasher（SHA-256）、AuditLog（并发安全哈希链 + 启动重放恢复）
-              AuditStore/FileAuditStore（JSONL 持久化、损坏隔离重建）/InMemoryAuditStore
+audit/        AuditHasher（SHA-256）、AuditLog（并发安全哈希链 + 启动重放恢复
+              + 尾部删除/整体丢失判定）
+              AuditCheckpoint（链外基线：记录数 + 末条哈希 + 校验码）
+              AuditStore/FileAuditStore（JSONL 持久化、基线、损坏隔离重建）
+              /InMemoryAuditStore、AuditIntegrityException（不可恢复时拒绝追加）
 directory/    LocalDirectory（本地主体/资源状态）
 web/          REST 控制器与全局异常处理（未知字段 -> 422 UNKNOWN_FIELD）
 config/       Bean 装配（审计文件路径与启动重放）与种子数据（1.0.0 + 1.1.0）
